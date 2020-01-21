@@ -67,7 +67,7 @@ spawnTokenManager Config{..} = do
     let lim = (max 256 (min maxEntries 32767)) - 1
     arr <- newArray (0, lim) emp
     update arr 0
-    ref <- I.newIORef 1
+    ref <- I.newIORef 0
     tid <- forkIO $ loop arr ref
     msk <- newHeaderMask
     return $ TokenManager arr ref msk tid
@@ -78,10 +78,11 @@ spawnTokenManager Config{..} = do
         writeArray arr idx ent
     loop arr ref = do
         threadDelay (interval * 60 * 1000000)
-        idx <- I.readIORef ref
-        update arr idx
+        idx0 <- I.readIORef ref
         (_, n) <- getBounds arr
-        I.writeIORef ref (idx + 1 `mod` (n + 1))
+        let idx = idx0 + 1 `mod` (n + 1)
+        update arr idx
+        I.writeIORef ref idx
         loop arr ref
 
 -- | Killing a token manager.
