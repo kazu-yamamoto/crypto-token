@@ -18,6 +18,8 @@ library
                      , array
                      , cryptonite
                      , memory
+  if impl(ghc >= 8)
+    default-extensions:  Strict StrictData
 
 source-repository head
   type:                 git
