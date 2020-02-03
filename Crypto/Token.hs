@@ -80,7 +80,7 @@ spawnTokenManager Config{..} = do
         threadDelay (interval * 60 * 1000000)
         idx0 <- I.readIORef ref
         (_, n) <- getBounds arr
-        let idx = idx0 + 1 `mod` (n + 1)
+        let idx = (idx0 + 1) `mod` (n + 1)
         update arr idx
         I.writeIORef ref idx
         loop arr ref
