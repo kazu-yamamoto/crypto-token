@@ -20,7 +20,7 @@ import Control.Concurrent
 import Crypto.Cipher.AES (AES256)
 import Crypto.Cipher.Types (AuthTag(..), AEADMode(..))
 import qualified Crypto.Cipher.Types as C
-import Crypto.Error (throwCryptoError)
+import Crypto.Error (maybeCryptoError, throwCryptoError)
 import Crypto.Random (getRandomBytes)
 import Data.Array.IO
 import Data.Bits (xor)
@@ -238,10 +238,9 @@ aes256gcmEncrypt plain key nonce = cipher `BA.append` BA.convert tag
 
 aes256gcmDecrypt :: ByteArray ba
                  => ba -> Bytes -> Bytes -> Maybe ba
-aes256gcmDecrypt ciphertag key nonce = plain
-  where
-    conn = throwCryptoError $ C.cipherInit key :: AES256
-    aeadIni = throwCryptoError $ C.aeadInit AEAD_GCM conn nonce
-    (cipher, tag) = BA.splitAt (BA.length ciphertag - tagLength) ciphertag
-    authtag = AuthTag $ BA.convert tag
-    plain = C.aeadSimpleDecrypt aeadIni constantAdditionalData cipher authtag
+aes256gcmDecrypt ctexttag key nonce = do
+    aes  <- maybeCryptoError $ C.cipherInit key :: Maybe AES256
+    aead <- maybeCryptoError $ C.aeadInit AEAD_GCM aes nonce
+    let (ctext, tag) = BA.splitAt (BA.length ctexttag - tagLength) ctexttag
+        authtag = AuthTag $ BA.convert tag
+    C.aeadSimpleDecrypt aead constantAdditionalData ctext authtag
