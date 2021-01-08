@@ -174,14 +174,18 @@ addHeader TokenManager{..} idx counter cipher = do
     hdrbin <- BA.create (sizeOf mskhdr) $ \ptr -> poke ptr mskhdr
     return (hdrbin `BA.append` cipher)
 
-delHeader :: ByteArray ba => TokenManager -> ba -> IO (Int, Int64, ba)
-delHeader TokenManager{..} token = do
-    let (hdrbin, cipher) = BA.splitAt (indexLength + counterLength) token
-    mskhdr <- BA.withByteArray hdrbin peek
-    let hdr = headerMask `xorHeader` mskhdr
-        idx = fromIntegral $ headerIndex hdr
-        counter = fromIntegral $ headerCounter hdr
-    return (idx, counter, cipher)
+delHeader :: ByteArray ba => TokenManager -> ba -> IO (Maybe (Int, Int64, ba))
+delHeader TokenManager{..} token
+  | BA.length token < minlen = return Nothing
+  | otherwise = do
+        let (hdrbin, cipher) = BA.splitAt minlen token
+        mskhdr <- BA.withByteArray hdrbin peek
+        let hdr = headerMask `xorHeader` mskhdr
+            idx = fromIntegral $ headerIndex hdr
+            counter = fromIntegral $ headerCounter hdr
+        return $ Just (idx, counter, cipher)
+  where
+    minlen = indexLength + counterLength
 
 -- | Encrypting a target value to get a token.
 encryptToken :: (Storable a, ByteArray ba)
@@ -205,9 +209,12 @@ encrypt secret x = do
 decryptToken :: (Storable a, ByteArray ba)
              => TokenManager -> ba -> IO (Maybe a)
 decryptToken mgr token = do
-    (idx, counter, cipher) <- delHeader mgr token
-    secret <- getSecret mgr idx
-    decrypt secret counter cipher
+    mx <- delHeader mgr token
+    case mx of
+      Nothing -> return Nothing
+      Just (idx, counter, cipher) -> do
+          secret <- getSecret mgr idx
+          decrypt secret counter cipher
 
 decrypt :: (Storable a, ByteArray ba)
         => Secret -> Int64 -> ba -> IO (Maybe a)
