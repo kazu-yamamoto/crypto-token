@@ -197,7 +197,7 @@ encrypt :: (Storable a, ByteArray ba)
 encrypt secret x = do
     counter <- I.atomicModifyIORef' (secretCounter secret) (\i -> (i+1, i))
     plain <- BA.create (sizeOf x) $ \ptr -> poke ptr x
-    nonce <- makeNounce counter $ secretIV secret
+    nonce <- makeNonce counter $ secretIV secret
     let cipher = aes256gcmEncrypt plain (secretKey secret) nonce
     return (counter, cipher)
 
@@ -212,15 +212,15 @@ decryptToken mgr token = do
 decrypt :: (Storable a, ByteArray ba)
         => Secret -> Int64 -> ba -> IO (Maybe a)
 decrypt secret counter cipher = do
-    nonce <- makeNounce counter $ secretIV secret
+    nonce <- makeNonce counter $ secretIV secret
     let mplain = aes256gcmDecrypt cipher (secretKey secret) nonce
     case mplain of
       Nothing    -> return Nothing
       Just plain -> Just <$> BA.withByteArray plain peek
 
-makeNounce :: forall ba . ByteArray ba => Int64 -> ba -> IO ba
-makeNounce counter iv = do
-    cv <- BA.create 8 $ \ptr -> poke ptr counter
+makeNonce :: forall ba . ByteArray ba => Int64 -> ba -> IO ba
+makeNonce counter iv = do
+    cv <- BA.create ivLength $ \ptr -> poke ptr counter
     return $ iv `BA.xor` (cv :: ba)
 
 ----------------------------------------------------------------
