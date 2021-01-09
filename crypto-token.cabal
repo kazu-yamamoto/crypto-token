@@ -1,5 +1,5 @@
 name:                crypto-token
-version:             0.0.0.0
+version:             0.0.1
 synopsis:            crypto tokens
 description:         Encrypted tokens/tickets to keep state in the client side.
 license:             BSD3
