@@ -216,14 +216,17 @@ decryptToken mgr token = do
           secret <- getSecret mgr idx
           decrypt secret counter cipher
 
-decrypt :: (Storable a, ByteArray ba)
+decrypt :: forall a ba . (Storable a, ByteArray ba)
         => Secret -> Int64 -> ba -> IO (Maybe a)
 decrypt secret counter cipher = do
     nonce <- makeNonce counter $ secretIV secret
     let mplain = aes256gcmDecrypt cipher (secretKey secret) nonce
+        expect = sizeOf (undefined :: a)
     case mplain of
-      Nothing    -> return Nothing
-      Just plain -> Just <$> BA.withByteArray plain peek
+      Just plain
+        | BA.length plain == expect -> Just <$> BA.withByteArray plain peek
+      _                             -> return Nothing
+
 
 makeNonce :: forall ba . ByteArray ba => Int64 -> ba -> IO ba
 makeNonce counter iv = do
