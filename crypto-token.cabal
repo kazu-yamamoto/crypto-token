@@ -18,6 +18,7 @@ library
                      , array
                      , cryptonite
                      , memory
+                     , random
   if impl(ghc >= 8)
     default-extensions:  Strict StrictData
 

@@ -23,16 +23,17 @@ import Crypto.Cipher.AES (AES256)
 import Crypto.Cipher.Types (AuthTag(..), AEADMode(..))
 import qualified Crypto.Cipher.Types as C
 import Crypto.Error (maybeCryptoError, throwCryptoError)
-import Crypto.Random (getRandomBytes)
+import Control.Monad (replicateM)
 import Data.Array.IO
 import Data.Bits (xor)
 import Data.ByteArray (ByteArray, Bytes)
 import qualified Data.ByteArray as BA
 import qualified Data.IORef as I
 import Data.Int (Int64)
-import Data.Word (Word16, Word64)
+import Data.Word (Word16, Word64, Word8)
 import Foreign.Ptr
 import Foreign.Storable
+import System.Random (randomIO)
 
 ----------------------------------------------------------------
 
@@ -114,6 +115,12 @@ generateSecret :: IO Secret
 generateSecret = Secret <$> genIV
                         <*> genKey
                         <*> I.newIORef 0
+
+getRandomOneByte :: IO Word8
+getRandomOneByte = randomIO
+
+getRandomBytes :: Int -> IO Bytes
+getRandomBytes n = BA.pack <$> replicateM n getRandomOneByte
 
 genKey :: IO Bytes
 genKey = getRandomBytes keyLength
