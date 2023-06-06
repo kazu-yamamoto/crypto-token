@@ -1,5 +1,5 @@
 name:                crypto-token
-version:             0.0.1
+version:             0.0.2
 synopsis:            crypto tokens
 description:         Encrypted tokens/tickets to keep state in the client side.
 license:             BSD3
@@ -16,7 +16,7 @@ library
   exposed-modules:     Crypto.Token
   build-depends:       base >= 4.9 && < 5
                      , array
-                     , cryptonite
+                     , crypton
                      , memory
   if impl(ghc >= 8)
     default-extensions:  Strict StrictData
