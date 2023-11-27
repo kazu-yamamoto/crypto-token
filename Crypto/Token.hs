@@ -6,21 +6,23 @@
 --   For security reasons, 'Storable' data types MUST be fixed-size
 --   when stored (i.e. serialized into the memory).
 module Crypto.Token (
-  -- * Configuration
-    Config(..)
-  , defaultConfig
-  -- * Token manager
-  , TokenManager
-  , spawnTokenManager
-  , killTokenManager
-  -- * Encryption and decryption
-  , encryptToken
-  , decryptToken
-  ) where
+    -- * Configuration
+    Config (..),
+    defaultConfig,
+
+    -- * Token manager
+    TokenManager,
+    spawnTokenManager,
+    killTokenManager,
+
+    -- * Encryption and decryption
+    encryptToken,
+    decryptToken,
+) where
 
 import Control.Concurrent
 import Crypto.Cipher.AES (AES256)
-import Crypto.Cipher.Types (AuthTag(..), AEADMode(..))
+import Crypto.Cipher.Types (AEADMode (..), AuthTag (..))
 import qualified Crypto.Cipher.Types as C
 import Crypto.Error (maybeCryptoError, throwCryptoError)
 import Crypto.Random (getRandomBytes)
@@ -37,30 +39,32 @@ import Foreign.Storable
 ----------------------------------------------------------------
 
 -- | Configuration for token manager.
-data Config = Config {
-  -- | The interval to generate a new secret and remove the oldest one in minutes.
-    interval   :: Int
-  -- | Maximum size of secret entries. Minimum is 256 and maximum is 32767.
-  , maxEntries :: Int
-  }
+data Config = Config
+    { interval :: Int
+    -- ^ The interval to generate a new secret and remove the oldest one in minutes.
+    , maxEntries :: Int
+    -- ^ Maximum size of secret entries. Minimum is 256 and maximum is 32767.
+    }
 
 -- | Default configuration to update secrets in 30 minutes and keep them for 10 days.
 defaultConfig :: Config
-defaultConfig = Config {
-    interval = 30
-  , maxEntries = 480
-  }
+defaultConfig =
+    Config
+        { interval = 30
+        , maxEntries = 480
+        }
 
 ----------------------------------------------------------------
 
 -- fixme: mask
+
 -- | The abstract data type for token manager.
-data TokenManager = TokenManager {
-    secrets :: IOArray Int Secret
-  , currentIndex :: I.IORef Int
-  , headerMask :: Header
-  , threadId :: ThreadId
-  }
+data TokenManager = TokenManager
+    { secrets :: IOArray Int Secret
+    , currentIndex :: I.IORef Int
+    , headerMask :: Header
+    , threadId :: ThreadId
+    }
 
 -- | Spawning a token manager.
 spawnTokenManager :: Config -> IO TokenManager
@@ -101,19 +105,21 @@ getSecret TokenManager{..} idx0 = do
 
 ----------------------------------------------------------------
 
-data Secret = Secret {
-    secretIV      :: Bytes
-  , secretKey     :: Bytes
-  , secretCounter :: I.IORef Int64
-  }
+data Secret = Secret
+    { secretIV :: Bytes
+    , secretKey :: Bytes
+    , secretCounter :: I.IORef Int64
+    }
 
 emptySecret :: IO Secret
 emptySecret = Secret BA.empty BA.empty <$> I.newIORef 0
 
 generateSecret :: IO Secret
-generateSecret = Secret <$> genIV
-                        <*> genKey
-                        <*> I.newIORef 0
+generateSecret =
+    Secret
+        <$> genIV
+        <*> genKey
+        <*> I.newIORef 0
 
 genKey :: IO Bytes
 genKey = getRandomBytes keyLength
@@ -140,13 +146,13 @@ tagLength = 16
 
 ----------------------------------------------------------------
 
-data Header = Header {
-    headerIndex   :: Word16
-  , headerCounter :: Word64
-  }
+data Header = Header
+    { headerIndex :: Word16
+    , headerCounter :: Word64
+    }
 
 instance Storable Header where
-    sizeOf _    = indexLength + counterLength
+    sizeOf _ = indexLength + counterLength
     alignment _ = indexLength -- fixme
     peek p = do
         i <- peek $ castPtr p
@@ -164,10 +170,11 @@ newHeaderMask = do
 ----------------------------------------------------------------
 
 xorHeader :: Header -> Header -> Header
-xorHeader x y = Header {
-    headerIndex = headerIndex x `xor` headerIndex y
-  , headerCounter = headerCounter x `xor` headerCounter y
-  }
+xorHeader x y =
+    Header
+        { headerIndex = headerIndex x `xor` headerIndex y
+        , headerCounter = headerCounter x `xor` headerCounter y
+        }
 
 addHeader :: ByteArray ba => TokenManager -> Int -> Int64 -> ba -> IO ba
 addHeader TokenManager{..} idx counter cipher = do
@@ -178,8 +185,8 @@ addHeader TokenManager{..} idx counter cipher = do
 
 delHeader :: ByteArray ba => TokenManager -> ba -> IO (Maybe (Int, Int64, ba))
 delHeader TokenManager{..} token
-  | BA.length token < minlen = return Nothing
-  | otherwise = do
+    | BA.length token < minlen = return Nothing
+    | otherwise = do
         let (hdrbin, cipher) = BA.splitAt minlen token
         mskhdr <- BA.withByteArray hdrbin peek
         let hdr = headerMask `xorHeader` mskhdr
@@ -190,47 +197,60 @@ delHeader TokenManager{..} token
     minlen = indexLength + counterLength
 
 -- | Encrypting a target value to get a token.
-encryptToken :: (Storable a, ByteArray ba)
-             => TokenManager -> a -> IO ba
+encryptToken
+    :: (Storable a, ByteArray ba)
+    => TokenManager
+    -> a
+    -> IO ba
 encryptToken mgr x = do
     idx <- I.readIORef $ currentIndex mgr
     secret <- getSecret mgr idx
     (counter, cipher) <- encrypt secret x
     addHeader mgr idx counter cipher
 
-encrypt :: (Storable a, ByteArray ba)
-        => Secret -> a -> IO (Int64, ba)
+encrypt
+    :: (Storable a, ByteArray ba)
+    => Secret
+    -> a
+    -> IO (Int64, ba)
 encrypt secret x = do
-    counter <- I.atomicModifyIORef' (secretCounter secret) (\i -> (i+1, i))
+    counter <- I.atomicModifyIORef' (secretCounter secret) (\i -> (i + 1, i))
     plain <- BA.create (sizeOf x) $ \ptr -> poke ptr x
     nonce <- makeNonce counter $ secretIV secret
     let cipher = aes256gcmEncrypt plain (secretKey secret) nonce
     return (counter, cipher)
 
 -- | Decrypting a token to get a target value.
-decryptToken :: (Storable a, ByteArray ba)
-             => TokenManager -> ba -> IO (Maybe a)
+decryptToken
+    :: (Storable a, ByteArray ba)
+    => TokenManager
+    -> ba
+    -> IO (Maybe a)
 decryptToken mgr token = do
     mx <- delHeader mgr token
     case mx of
-      Nothing -> return Nothing
-      Just (idx, counter, cipher) -> do
-          secret <- getSecret mgr idx
-          decrypt secret counter cipher
+        Nothing -> return Nothing
+        Just (idx, counter, cipher) -> do
+            secret <- getSecret mgr idx
+            decrypt secret counter cipher
 
-decrypt :: forall a ba . (Storable a, ByteArray ba)
-        => Secret -> Int64 -> ba -> IO (Maybe a)
+decrypt
+    :: forall a ba
+     . (Storable a, ByteArray ba)
+    => Secret
+    -> Int64
+    -> ba
+    -> IO (Maybe a)
 decrypt secret counter cipher = do
     nonce <- makeNonce counter $ secretIV secret
     let mplain = aes256gcmDecrypt cipher (secretKey secret) nonce
         expect = sizeOf (undefined :: a)
     case mplain of
-      Just plain
-        | BA.length plain == expect -> Just <$> BA.withByteArray plain peek
-      _                             -> return Nothing
+        Just plain
+            | BA.length plain == expect -> Just <$> BA.withByteArray plain peek
+        _ -> return Nothing
 
-
-makeNonce :: forall ba . ByteArray ba => Int64 -> ba -> IO ba
+makeNonce :: forall ba. ByteArray ba => Int64 -> ba -> IO ba
 makeNonce counter iv = do
     cv <- BA.create ivLength $ \ptr -> poke ptr counter
     return $ iv `BA.xor` (cv :: ba)
@@ -240,18 +260,26 @@ makeNonce counter iv = do
 constantAdditionalData :: Bytes
 constantAdditionalData = BA.empty
 
-aes256gcmEncrypt :: ByteArray ba
-                 => ba -> Bytes -> Bytes -> ba
+aes256gcmEncrypt
+    :: ByteArray ba
+    => ba
+    -> Bytes
+    -> Bytes
+    -> ba
 aes256gcmEncrypt plain key nonce = cipher `BA.append` BA.convert tag
   where
     conn = throwCryptoError (C.cipherInit key) :: AES256
     aeadIni = throwCryptoError $ C.aeadInit AEAD_GCM conn nonce
     (AuthTag tag, cipher) = C.aeadSimpleEncrypt aeadIni constantAdditionalData plain tagLength
 
-aes256gcmDecrypt :: ByteArray ba
-                 => ba -> Bytes -> Bytes -> Maybe ba
+aes256gcmDecrypt
+    :: ByteArray ba
+    => ba
+    -> Bytes
+    -> Bytes
+    -> Maybe ba
 aes256gcmDecrypt ctexttag key nonce = do
-    aes  <- maybeCryptoError $ C.cipherInit key :: Maybe AES256
+    aes <- maybeCryptoError $ C.cipherInit key :: Maybe AES256
     aead <- maybeCryptoError $ C.aeadInit AEAD_GCM aes nonce
     let (ctext, tag) = BA.splitAt (BA.length ctexttag - tagLength) ctexttag
         authtag = AuthTag $ BA.convert tag
