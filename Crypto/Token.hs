@@ -47,8 +47,12 @@ data Config = Config
     , maxEntries :: Int
     -- ^ Maximum size of secret entries. Minimum is 256 and maximum is 32767.
     }
+    deriving (Eq, Show)
 
 -- | Default configuration to update secrets in 30 minutes and keep them for 10 days.
+--
+-- >>> defaultConfig
+-- Config {interval = 30, maxEntries = 480}
 defaultConfig :: Config
 defaultConfig =
     Config
@@ -67,7 +71,8 @@ data TokenManager = TokenManager
     , getDecryptSecret :: Index -> IO Secret
     }
 
--- | Spawning a token manager.
+-- | Spawning a token manager based on auto-update.
+--   This thread will sleep if 'getEncryptSecret' is not used.
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     emp <- emptySecret
