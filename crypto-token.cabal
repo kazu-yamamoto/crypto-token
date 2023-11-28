@@ -20,6 +20,7 @@ library
     ghc-options:      -Wall
     build-depends:
         base >=4.9 && <5,
+        auto-update,
         array,
         crypton,
         memory
