@@ -72,7 +72,7 @@ data TokenManager = TokenManager
     }
 
 -- | Spawning a token manager based on auto-update.
---   This thread will sleep if 'getEncryptSecret' is not used.
+--   This thread will sleep if not used and wake up again if used.
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     emp <- emptySecret
@@ -101,7 +101,7 @@ spawnTokenManager Config{..} = do
         return (sec, idx)
 
 -- | Killing a token manager.
---   Deprecated and no effecrt currently
+--   Deprecated and no effecrt currently.
 killTokenManager :: TokenManager -> IO ()
 killTokenManager _ = return ()
 
