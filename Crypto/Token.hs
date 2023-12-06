@@ -28,12 +28,14 @@ import Crypto.Error (maybeCryptoError, throwCryptoError)
 import Crypto.Random (getRandomBytes)
 import Data.Array.IO
 import Data.Bits (xor)
-import Data.ByteArray (ByteArray, Bytes)
 import qualified Data.ByteArray as BA
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Internal as BS
 import qualified Data.IORef as I
-import Data.Word (Word16, Word64)
+import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
+import Network.ByteOrder
 
 ----------------------------------------------------------------
 
@@ -116,13 +118,13 @@ readSecret secrets idx0 = do
 ----------------------------------------------------------------
 
 data Secret = Secret
-    { secretIV :: Bytes
-    , secretKey :: Bytes
+    { secretIV :: ByteString
+    , secretKey :: ByteString
     , secretCounter :: I.IORef Counter
     }
 
 emptySecret :: IO Secret
-emptySecret = Secret BA.empty BA.empty <$> I.newIORef 0
+emptySecret = Secret BS.empty BS.empty <$> I.newIORef 0
 
 generateSecret :: IO Secret
 generateSecret =
@@ -131,10 +133,10 @@ generateSecret =
         <*> genKey
         <*> I.newIORef 0
 
-genKey :: IO Bytes
+genKey :: IO ByteString
 genKey = getRandomBytes keyLength
 
-genIV :: IO Bytes
+genIV :: IO ByteString
 genIV = getRandomBytes ivLength
 
 ----------------------------------------------------------------
@@ -161,21 +163,19 @@ data Header = Header
     , headerCounter :: Counter
     }
 
-instance Storable Header where
-    sizeOf _ = indexLength + counterLength
-    alignment _ = indexLength -- fixme
-    peek p = do
-        i <- peek $ castPtr p
-        c <- peek (castPtr p `plusPtr` indexLength)
-        return $ Header i c
-    poke p (Header i c) = do
-        poke (castPtr p) i
-        poke (castPtr p `plusPtr` indexLength) c
+encodeHeader :: Header -> IO ByteString
+encodeHeader Header{..} = withWriteBuffer (indexLength + counterLength) $ \wbuf -> do
+    write16 wbuf headerIndex
+    write64 wbuf headerCounter
+
+decodeHeader :: ByteString -> IO Header
+decodeHeader bs = withReadBuffer bs $ \rbuf ->
+    Header <$> read16 rbuf <*> read64 rbuf
 
 newHeaderMask :: IO Header
 newHeaderMask = do
-    bin <- getRandomBytes (indexLength + counterLength) :: IO Bytes
-    BA.withByteArray bin peek
+    bin <- getRandomBytes (indexLength + counterLength) :: IO ByteString
+    decodeHeader bin
 
 ----------------------------------------------------------------
 
@@ -186,20 +186,20 @@ xorHeader x y =
         , headerCounter = headerCounter x `xor` headerCounter y
         }
 
-addHeader :: ByteArray ba => TokenManager -> Index -> Counter -> ba -> IO ba
+addHeader :: TokenManager -> Index -> Counter -> ByteString -> IO ByteString
 addHeader TokenManager{..} idx counter cipher = do
     let hdr = Header idx counter
         mskhdr = headerMask `xorHeader` hdr
-    hdrbin <- BA.create (sizeOf mskhdr) $ \ptr -> poke ptr mskhdr
-    return (hdrbin `BA.append` cipher)
+    hdrbin <- encodeHeader mskhdr
+    return (hdrbin `BS.append` cipher)
 
 delHeader
-    :: ByteArray ba => TokenManager -> ba -> IO (Maybe (Index, Counter, ba))
+    :: TokenManager -> ByteString -> IO (Maybe (Index, Counter, ByteString))
 delHeader TokenManager{..} token
-    | BA.length token < minlen = return Nothing
+    | BS.length token < minlen = return Nothing
     | otherwise = do
-        let (hdrbin, cipher) = BA.splitAt minlen token
-        mskhdr <- BA.withByteArray hdrbin peek
+        let (hdrbin, cipher) = BS.splitAt minlen token
+        mskhdr <- decodeHeader hdrbin
         let hdr = headerMask `xorHeader` mskhdr
             idx = headerIndex hdr
             counter = headerCounter hdr
@@ -209,33 +209,29 @@ delHeader TokenManager{..} token
 
 -- | Encrypting a target value to get a token.
 encryptToken
-    :: (Storable a, ByteArray ba)
-    => TokenManager
-    -> a
-    -> IO ba
+    :: TokenManager
+    -> ByteString
+    -> IO ByteString
 encryptToken mgr x = do
     (secret, idx) <- getEncryptSecret mgr
     (counter, cipher) <- encrypt secret x
     addHeader mgr idx counter cipher
 
 encrypt
-    :: (Storable a, ByteArray ba)
-    => Secret
-    -> a
-    -> IO (Counter, ba)
-encrypt secret x = do
+    :: Secret
+    -> ByteString
+    -> IO (Counter, ByteString)
+encrypt secret plain = do
     counter <- I.atomicModifyIORef' (secretCounter secret) (\i -> (i + 1, i))
-    plain <- BA.create (sizeOf x) $ \ptr -> poke ptr x
     nonce <- makeNonce counter $ secretIV secret
     let cipher = aes256gcmEncrypt plain (secretKey secret) nonce
     return (counter, cipher)
 
 -- | Decrypting a token to get a target value.
 decryptToken
-    :: (Storable a, ByteArray ba)
-    => TokenManager
-    -> ba
-    -> IO (Maybe a)
+    :: TokenManager
+    -> ByteString
+    -> IO (Maybe ByteString)
 decryptToken mgr token = do
     mx <- delHeader mgr token
     case mx of
@@ -245,52 +241,43 @@ decryptToken mgr token = do
             decrypt secret counter cipher
 
 decrypt
-    :: forall a ba
-     . (Storable a, ByteArray ba)
-    => Secret
+    :: Secret
     -> Counter
-    -> ba
-    -> IO (Maybe a)
+    -> ByteString
+    -> IO (Maybe ByteString)
 decrypt secret counter cipher = do
     nonce <- makeNonce counter $ secretIV secret
-    let mplain = aes256gcmDecrypt cipher (secretKey secret) nonce
-        expect = sizeOf (undefined :: a)
-    case mplain of
-        Just plain
-            | BA.length plain == expect -> Just <$> BA.withByteArray plain peek
-        _ -> return Nothing
+    return $ aes256gcmDecrypt cipher (secretKey secret) nonce
 
-makeNonce :: forall ba. ByteArray ba => Counter -> ba -> IO ba
+makeNonce :: Counter -> ByteString -> IO ByteString
 makeNonce counter iv = do
-    cv <- BA.create ivLength $ \ptr -> poke ptr counter
-    return $ iv `BA.xor` (cv :: ba)
+    cv <- BS.create ivLength $ \ptr -> poke (castPtr ptr) counter
+    return $ iv `BA.xor` cv
 
 ----------------------------------------------------------------
 
-constantAdditionalData :: Bytes
-constantAdditionalData = BA.empty
+constantAdditionalData :: ByteString
+constantAdditionalData = BS.empty
 
 aes256gcmEncrypt
-    :: ByteArray ba
-    => ba
-    -> Bytes
-    -> Bytes
-    -> ba
-aes256gcmEncrypt plain key nonce = cipher `BA.append` BA.convert tag
+    :: ByteString
+    -> ByteString
+    -> ByteString
+    -> ByteString
+aes256gcmEncrypt plain key nonce = cipher `BS.append` (BA.convert tag)
   where
     conn = throwCryptoError (C.cipherInit key) :: AES256
     aeadIni = throwCryptoError $ C.aeadInit AEAD_GCM conn nonce
     (AuthTag tag, cipher) = C.aeadSimpleEncrypt aeadIni constantAdditionalData plain tagLength
 
 aes256gcmDecrypt
-    :: ByteArray ba
-    => ba
-    -> Bytes
-    -> Bytes
-    -> Maybe ba
+    :: ByteString
+    -> ByteString
+    -> ByteString
+    -> Maybe ByteString
 aes256gcmDecrypt ctexttag key nonce = do
     aes <- maybeCryptoError $ C.cipherInit key :: Maybe AES256
     aead <- maybeCryptoError $ C.aeadInit AEAD_GCM aes nonce
-    let (ctext, tag) = BA.splitAt (BA.length ctexttag - tagLength) ctexttag
+    let (ctext, tag) = BS.splitAt (BS.length ctexttag - tagLength) ctexttag
         authtag = AuthTag $ BA.convert tag
     C.aeadSimpleDecrypt aead constantAdditionalData ctext authtag
