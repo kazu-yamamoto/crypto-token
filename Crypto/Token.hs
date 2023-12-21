@@ -87,11 +87,7 @@ spawnTokenManager Config{..} = do
     ref <- I.newIORef 0
     tid <- forkIO $ loop arr ref
     msk <- newHeaderMask
-    let getEncSec = do
-            idx <- I.readIORef ref
-            sec <- readSecret arr idx
-            return (sec, idx)
-    return $ TokenManager msk getEncSec (readSecret arr) tid
+    return $ TokenManager msk (readCurrentSecret arr ref) (readSecret arr) tid
   where
     loop arr ref = do
         threadDelay (interval * 1000000)
@@ -117,6 +113,12 @@ readSecret secrets idx0 = do
     (_, n) <- getBounds secrets
     let idx = idx0 `mod` (n + 1)
     readArray secrets idx
+
+readCurrentSecret :: IOArray Index Secret -> I.IORef Index -> IO (Secret, Index)
+readCurrentSecret arr ref = do
+    idx <- I.readIORef ref
+    sec <- readSecret arr idx
+    return (sec, idx)
 
 ----------------------------------------------------------------
 
