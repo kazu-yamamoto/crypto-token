@@ -3,8 +3,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Encrypted tokens/tickets to keep state in the client side.
---   For security reasons, 'Storable' data types MUST be fixed-size
---   when stored (i.e. serialized into the memory).
 module Crypto.Token (
     -- * Configuration
     Config,
