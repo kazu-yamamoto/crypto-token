@@ -22,7 +22,7 @@ module Crypto.Token (
     decryptToken,
 ) where
 
-import Control.AutoUpdate
+import Control.Concurrent
 import Crypto.Cipher.AES (AES256)
 import Crypto.Cipher.Types (AEADMode (..), AuthTag (..))
 import qualified Crypto.Cipher.Types as C
@@ -73,28 +73,31 @@ data TokenManager = TokenManager
     { headerMask :: Header
     , getEncryptSecret :: IO (Secret, Index)
     , getDecryptSecret :: Index -> IO Secret
+    , threadId :: ThreadId
     }
 
--- | Spawning a token manager based on auto-update.
---   This thread will sleep if not used and wake up again if used.
+-- | Spawning a token manager.
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     emp <- emptySecret
     let lim = fromIntegral (tokenLifetime `div` interval)
-    arr <- newArray (0, lim) emp
+    arr <- newArray (0, lim - 1) emp
     ent <- generateSecret
     writeArray arr 0 ent
     ref <- I.newIORef 0
-    getEncSec <-
-        mkAutoUpdate
-            defaultUpdateSettings
-                { updateAction = update arr ref
-                , updateFreq = interval * 1000000
-                }
+    tid <- forkIO $ loop arr ref
     msk <- newHeaderMask
-    return $ TokenManager msk getEncSec (readSecret arr)
+    let getEncSec = do
+            idx <- I.readIORef ref
+            sec <- readSecret arr idx
+            return (sec, idx)
+    return $ TokenManager msk getEncSec (readSecret arr) tid
   where
-    update :: IOArray Index Secret -> I.IORef Index -> IO (Secret, Index)
+    loop arr ref = do
+        threadDelay (interval * 1000000)
+        update arr ref
+        loop arr ref
+    update :: IOArray Index Secret -> I.IORef Index -> IO ()
     update arr ref = do
         idx0 <- I.readIORef ref
         (_, n) <- getBounds arr
@@ -102,12 +105,10 @@ spawnTokenManager Config{..} = do
         sec <- generateSecret
         writeArray arr idx sec
         I.writeIORef ref idx
-        return (sec, idx)
 
 -- | Killing a token manager.
---   Deprecated and no effecrt currently.
 killTokenManager :: TokenManager -> IO ()
-killTokenManager _ = return ()
+killTokenManager TokenManager{..} = killThread threadId
 
 ----------------------------------------------------------------
 
