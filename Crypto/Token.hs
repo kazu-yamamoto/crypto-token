@@ -7,7 +7,9 @@
 --   when stored (i.e. serialized into the memory).
 module Crypto.Token (
     -- * Configuration
-    Config (..),
+    Config,
+    interval,
+    tokenLifetime,
     defaultConfig,
 
     -- * Token manager
@@ -45,21 +47,21 @@ type Counter = Word64
 -- | Configuration for token manager.
 data Config = Config
     { interval :: Int
-    -- ^ The interval to generate a new secret and remove the oldest one in minutes.
-    , maxEntries :: Int
-    -- ^ Maximum size of secret entries. Minimum is 256 and maximum is 32767.
+    -- ^ The interval to generate a new secret and remove the oldest one in seconds.
+    , tokenLifetime :: Int
+    -- ^ The token lifetime, that is, tokens can be decrypted in this period.
     }
     deriving (Eq, Show)
 
--- | Default configuration to update secrets in 30 minutes and keep them for 10 days.
+-- | Default configuration to update secrets in 30 minutes (1,800 seconds) and token liefetime is 1 day (86,400 seconds)
 --
 -- >>> defaultConfig
--- Config {interval = 30, maxEntries = 480}
+-- Config {interval = 1800, maxEntries = 86400}
 defaultConfig :: Config
 defaultConfig =
     Config
-        { interval = 30
-        , maxEntries = 480
+        { interval = 1800
+        , tokenLifetime = 86400
         }
 
 ----------------------------------------------------------------
@@ -78,7 +80,7 @@ data TokenManager = TokenManager
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     emp <- emptySecret
-    let lim = fromIntegral (max 256 (min maxEntries 32767)) - 1
+    let lim = fromIntegral (tokenLifetime `div` interval)
     arr <- newArray (0, lim) emp
     ent <- generateSecret
     writeArray arr 0 ent
