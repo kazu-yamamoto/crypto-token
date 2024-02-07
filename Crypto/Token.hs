@@ -51,15 +51,15 @@ data Config = Config
     }
     deriving (Eq, Show)
 
--- | Default configuration to update secrets in 30 minutes (1,800 seconds) and token liefetime is 1 day (86,400 seconds)
+-- | Default configuration to update secrets in 30 minutes (1,800 seconds) and token lifetime is 2 hours (7,200 seconds)
 --
 -- >>> defaultConfig
--- Config {interval = 1800, maxEntries = 86400}
+-- Config {interval = 1800, tokenLifetime = 7200}
 defaultConfig :: Config
 defaultConfig =
     Config
         { interval = 1800
-        , tokenLifetime = 86400
+        , tokenLifetime = 7200
         }
 
 ----------------------------------------------------------------
