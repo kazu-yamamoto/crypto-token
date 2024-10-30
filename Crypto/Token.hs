@@ -6,9 +6,10 @@
 module Crypto.Token (
     -- * Configuration
     Config,
+    defaultConfig,
     interval,
     tokenLifetime,
-    defaultConfig,
+    threadName,
 
     -- * Token manager
     TokenManager,
@@ -35,6 +36,7 @@ import qualified Data.IORef as I
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Conc.Sync (labelThread)
 import Network.ByteOrder
 
 ----------------------------------------------------------------
@@ -48,6 +50,7 @@ data Config = Config
     -- ^ The interval to generate a new secret and remove the oldest one in seconds.
     , tokenLifetime :: Int
     -- ^ The token lifetime, that is, tokens can be decrypted in this period.
+    , threadName :: String
     }
     deriving (Eq, Show)
 
@@ -60,6 +63,7 @@ defaultConfig =
     Config
         { interval = 1800
         , tokenLifetime = 7200
+        , threadName = "Crypto token manager"
         }
 
 ----------------------------------------------------------------
@@ -84,6 +88,7 @@ spawnTokenManager Config{..} = do
     writeArray arr 0 ent
     ref <- I.newIORef 0
     tid <- forkIO $ loop arr ref
+    labelThread tid threadName
     msk <- newHeaderMask
     return $ TokenManager msk (readCurrentSecret arr ref) (readSecret arr) tid
   where
