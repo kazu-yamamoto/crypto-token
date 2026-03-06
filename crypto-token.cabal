@@ -1,6 +1,6 @@
 cabal-version: >=1.10
 name:          crypto-token
-version:       0.1.2
+version:       0.2.0
 license:       BSD3
 license-file:  LICENSE
 maintainer:    Kazu Yamamoto <kazu@iij.ad.jp>
@@ -22,9 +22,9 @@ library
         base >=4.9 && <5,
         array,
         bytestring,
-        crypton,
-        memory,
-        network-byte-order
+        crypton >=1.1.0 && <1.2,
+        network-byte-order,
+        ram
 
     if impl(ghc >=8)
         default-extensions: Strict StrictData
