@@ -57,7 +57,7 @@ data Config = Config
 -- | Default configuration to update secrets in 30 minutes (1,800 seconds) and token lifetime is 2 hours (7,200 seconds)
 --
 -- >>> defaultConfig
--- Config {interval = 1800, tokenLifetime = 7200}
+-- Config {interval = 1800, tokenLifetime = 7200, threadName = "Crypto token manager"}
 defaultConfig :: Config
 defaultConfig =
     Config
