@@ -30,7 +30,6 @@ import qualified Crypto.Cipher.Types as C
 import Crypto.Error (maybeCryptoError, throwCryptoError)
 import Crypto.Random (getRandomBytes)
 import Data.Array.IO
-import Data.Bits (xor)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
 import qualified Data.IORef as I
@@ -69,11 +68,9 @@ defaultConfig =
 
 ----------------------------------------------------------------
 
--- fixme: mask
-
 -- | The abstract data type for token manager.
 data TokenManager = TokenManager
-    { headerMask :: Header
+    { headerKey :: AES256
     , getEncryptSecret :: IO (Secret, Index)
     , getDecryptSecret :: Index -> IO Secret
     , threadId :: ThreadId
@@ -97,9 +94,9 @@ spawnTokenManager Config{..} = do
     ref <- I.newIORef 0
     tid <- forkIO $ loop arr ref
     labelThread tid threadName
-    msk <- newHeaderMask
+    hkey <- newHeaderKey
     return $
-        TokenManager msk (readCurrentSecret arr ref) (readSecret arr) tid $
+        TokenManager hkey (readCurrentSecret arr ref) (readSecret arr) tid $
             fromIntegral lifetime * 1000000000
   where
     loop arr ref = do
@@ -174,6 +171,10 @@ counterLength = 8
 tagLength :: Int
 tagLength = 16
 
+-- one AES block: index, counter and zero padding
+headerLength :: Int
+headerLength = 16
+
 ----------------------------------------------------------------
 
 data Header = Header
@@ -190,40 +191,34 @@ decodeHeader :: ByteString -> IO Header
 decodeHeader bs = withReadBuffer bs $ \rbuf ->
     Header <$> read16 rbuf <*> read64 rbuf
 
-newHeaderMask :: IO Header
-newHeaderMask = do
-    bin <- getRandomBytes (indexLength + counterLength) :: IO ByteString
-    decodeHeader bin
+newHeaderKey :: IO AES256
+newHeaderKey = do
+    key <- getRandomBytes keyLength :: IO ByteString
+    return $ throwCryptoError $ C.cipherInit key
 
 ----------------------------------------------------------------
 
-xorHeader :: Header -> Header -> Header
-xorHeader x y =
-    Header
-        { headerIndex = headerIndex x `xor` headerIndex y
-        , headerCounter = headerCounter x `xor` headerCounter y
-        }
-
+-- The header is encrypted so that tokens do not reveal how they relate.
 addHeader :: TokenManager -> Index -> Counter -> ByteString -> IO ByteString
 addHeader TokenManager{..} idx counter cipher = do
-    let hdr = Header idx counter
-        mskhdr = headerMask `xorHeader` hdr
-    hdrbin <- encodeHeader mskhdr
-    return (hdrbin `BS.append` cipher)
+    hdrbin <- encodeHeader $ Header idx counter
+    let padding = BS.replicate (headerLength - BS.length hdrbin) 0
+        blk = C.ecbEncrypt headerKey (hdrbin `BS.append` padding)
+    return (blk `BS.append` cipher)
 
 delHeader
     :: TokenManager -> ByteString -> IO (Maybe (Index, Counter, ByteString))
 delHeader TokenManager{..} token
-    | BS.length token < minlen = return Nothing
+    | BS.length token < headerLength = return Nothing
     | otherwise = do
-        let (hdrbin, cipher) = BS.splitAt minlen token
-        mskhdr <- decodeHeader hdrbin
-        let hdr = headerMask `xorHeader` mskhdr
-            idx = headerIndex hdr
-            counter = headerCounter hdr
-        return $ Just (idx, counter, cipher)
-  where
-    minlen = indexLength + counterLength
+        let (blk, cipher) = BS.splitAt headerLength token
+            (hdrbin, padding) =
+                BS.splitAt (indexLength + counterLength) $ C.ecbDecrypt headerKey blk
+        if BS.any (/= 0) padding
+            then return Nothing
+            else do
+                Header{..} <- decodeHeader hdrbin
+                return $ Just (headerIndex, headerCounter, cipher)
 
 -- | Encrypting a target value to get a token.
 encryptToken
