@@ -38,6 +38,7 @@ import qualified Data.IORef as I
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
+import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc.Sync (labelThread)
 import Network.ByteOrder
 
@@ -51,7 +52,8 @@ data Config = Config
     { interval :: Int
     -- ^ The interval to generate a new secret and remove the oldest one in seconds.
     , tokenLifetime :: Int
-    -- ^ The token lifetime, that is, tokens can be decrypted in this period.
+    -- ^ The token lifetime in seconds, that is, tokens can be decrypted in this period.
+    --   It is cut short if it spans more than 65535 intervals.
     , threadName :: String
     }
     deriving (Eq, Show)
@@ -78,6 +80,7 @@ data TokenManager = TokenManager
     , getEncryptSecret :: IO (Secret, Index)
     , getDecryptSecret :: Index -> IO Secret
     , threadId :: ThreadId
+    , lifetimeNSec :: Word64
     }
 
 -- | Spawning a token manager.
@@ -86,8 +89,10 @@ spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     when (interval <= 0) $
         E.throwIO $ userError "Crypto.Token: interval must be positive"
-    -- an index travels as Word16, so there are at most 65536 slots
-    let slots = max 1 $ min 65536 $ tokenLifetime `div` interval
+    -- the secret a token was made with must outlive the token itself,
+    -- and an index travels as Word16, so there are at most 65536 slots
+    let lifetime = max 0 tokenLifetime
+        slots = min 65536 $ (lifetime + interval - 1) `div` interval + 1
     emp <- emptySecret
     arr <- newArray (0, slots - 1) emp
     ent <- generateSecret
@@ -96,7 +101,9 @@ spawnTokenManager Config{..} = do
     tid <- forkIO $ loop arr ref
     labelThread tid threadName
     msk <- newHeaderMask
-    return $ TokenManager msk (readCurrentSecret arr ref) (readSecret arr) tid
+    return $
+        TokenManager msk (readCurrentSecret arr ref) (readSecret arr) tid $
+            fromIntegral lifetime * 1000000000
   where
     loop arr ref = do
         threadDelay (interval * 1000000)
@@ -227,7 +234,8 @@ encryptToken
     -> IO ByteString
 encryptToken mgr x = do
     (secret, idx) <- getEncryptSecret mgr
-    (counter, cipher) <- encrypt secret x
+    now <- getMonotonicTimeNSec
+    (counter, cipher) <- encrypt secret (bytestring64 now `BS.append` x)
     addHeader mgr idx counter cipher
 
 encrypt
@@ -251,7 +259,17 @@ decryptToken mgr token = do
         Nothing -> return Nothing
         Just (idx, counter, cipher) -> do
             secret <- getDecryptSecret mgr idx
-            decrypt secret counter cipher
+            mplain <- decrypt secret counter cipher
+            now <- getMonotonicTimeNSec
+            return $ mplain >>= checkLifetime now
+  where
+    checkLifetime now plain
+        | BS.length plain < 8 = Nothing
+        | issued <= now && now - issued <= lifetimeNSec mgr = Just x
+        | otherwise = Nothing
+      where
+        (hdr, x) = BS.splitAt 8 plain
+        issued = word64 hdr
 
 decrypt
     :: Secret
