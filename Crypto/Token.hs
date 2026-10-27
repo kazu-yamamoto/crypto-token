@@ -22,6 +22,8 @@ module Crypto.Token (
 ) where
 
 import Control.Concurrent
+import qualified Control.Exception as E
+import Control.Monad (when)
 import Crypto.Cipher.AES (AES256)
 import Crypto.Cipher.Types (AEADMode (..), AuthTag (..))
 import qualified Crypto.Cipher.Types as C
@@ -79,11 +81,15 @@ data TokenManager = TokenManager
     }
 
 -- | Spawning a token manager.
+--   This throws an 'IOError' if 'interval' is not positive.
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
+    when (interval <= 0) $
+        E.throwIO $ userError "Crypto.Token: interval must be positive"
+    -- an index travels as Word16, so there are at most 65536 slots
+    let slots = max 1 $ min 65536 $ tokenLifetime `div` interval
     emp <- emptySecret
-    let lim = fromIntegral (tokenLifetime `div` interval)
-    arr <- newArray (0, lim - 1) emp
+    arr <- newArray (0, slots - 1) emp
     ent <- generateSecret
     writeArray arr 0 ent
     ref <- I.newIORef 0
@@ -96,11 +102,11 @@ spawnTokenManager Config{..} = do
         threadDelay (interval * 1000000)
         update arr ref
         loop arr ref
-    update :: IOArray Index Secret -> I.IORef Index -> IO ()
+    update :: IOArray Int Secret -> I.IORef Int -> IO ()
     update arr ref = do
         idx0 <- I.readIORef ref
-        (_, n) <- getBounds arr
-        let idx = (idx0 + 1) `mod` (n + 1)
+        n <- rangeSize <$> getBounds arr
+        let idx = (idx0 + 1) `mod` n
         sec <- generateSecret
         writeArray arr idx sec
         I.writeIORef ref idx
@@ -111,17 +117,16 @@ killTokenManager TokenManager{..} = killThread threadId
 
 ----------------------------------------------------------------
 
-readSecret :: IOArray Index Secret -> Index -> IO Secret
+readSecret :: IOArray Int Secret -> Index -> IO Secret
 readSecret secrets idx0 = do
-    (_, n) <- getBounds secrets
-    let idx = idx0 `mod` (n + 1)
-    readArray secrets idx
+    n <- rangeSize <$> getBounds secrets
+    readArray secrets $ fromIntegral idx0 `mod` n
 
-readCurrentSecret :: IOArray Index Secret -> I.IORef Index -> IO (Secret, Index)
+readCurrentSecret :: IOArray Int Secret -> I.IORef Int -> IO (Secret, Index)
 readCurrentSecret arr ref = do
     idx <- I.readIORef ref
-    sec <- readSecret arr idx
-    return (sec, idx)
+    sec <- readArray arr idx
+    return (sec, fromIntegral idx)
 
 ----------------------------------------------------------------
 
