@@ -1,6 +1,6 @@
 cabal-version: >=1.10
 name:          crypto-token
-version:       0.2.0
+version:       0.2.1
 license:       BSD3
 license-file:  LICENSE
 maintainer:    Kazu Yamamoto <kazu@iij.ad.jp>
@@ -9,6 +9,7 @@ synopsis:      crypto tokens
 description:   Encrypted tokens/tickets to keep state in the client side.
 category:      Cryptography, Network
 build-type:    Simple
+extra-source-files: ChangeLog.md
 
 source-repository head
     type:     git
