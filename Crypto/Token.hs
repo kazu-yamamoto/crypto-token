@@ -33,11 +33,8 @@ import Data.Array.IO
 import Data.Bits (xor)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Internal as BS
 import qualified Data.IORef as I
 import Data.Word
-import Foreign.Ptr
-import Foreign.Storable
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc.Sync (labelThread)
 import Network.ByteOrder
@@ -161,8 +158,9 @@ genIV = getRandomBytes ivLength
 
 ----------------------------------------------------------------
 
+-- 96 bits, the nonce length GCM is designed for
 ivLength :: Int
-ivLength = 8
+ivLength = 12
 
 keyLength :: Int
 keyLength = 32
@@ -244,8 +242,8 @@ encrypt
     -> IO (Counter, ByteString)
 encrypt secret plain = do
     counter <- I.atomicModifyIORef' (secretCounter secret) (\i -> (i + 1, i))
-    nonce <- makeNonce counter $ secretIV secret
-    let cipher = aes256gcmEncrypt plain (secretKey secret) nonce
+    let nonce = makeNonce counter $ secretIV secret
+        cipher = aes256gcmEncrypt plain (secretKey secret) nonce
     return (counter, cipher)
 
 -- | Decrypting a token to get a target value.
@@ -277,13 +275,13 @@ decrypt
     -> ByteString
     -> IO (Maybe ByteString)
 decrypt secret counter cipher = do
-    nonce <- makeNonce counter $ secretIV secret
+    let nonce = makeNonce counter $ secretIV secret
     return $ aes256gcmDecrypt cipher (secretKey secret) nonce
 
-makeNonce :: Counter -> ByteString -> IO ByteString
-makeNonce counter iv = do
-    cv <- BS.create ivLength $ \ptr -> poke (castPtr ptr) counter
-    return $ iv `BA.xor` cv
+makeNonce :: Counter -> ByteString -> ByteString
+makeNonce counter iv = iv `BA.xor` cv
+  where
+    cv = BS.replicate (ivLength - counterLength) 0 `BS.append` bytestring64 counter
 
 ----------------------------------------------------------------
 
