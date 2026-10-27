@@ -82,7 +82,8 @@ data TokenManager = TokenManager
 spawnTokenManager :: Config -> IO TokenManager
 spawnTokenManager Config{..} = do
     when (interval <= 0) $
-        E.throwIO $ userError "Crypto.Token: interval must be positive"
+        E.throwIO $
+            userError "Crypto.Token: interval must be positive"
     -- the secret a token was made with must outlive the token itself,
     -- and an index travels as Word16, so there are at most 65536 slots
     let lifetime = max 0 tokenLifetime
