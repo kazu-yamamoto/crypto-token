@@ -100,9 +100,14 @@ spawnTokenManager Config{..} = do
             fromIntegral lifetime * 1000000000
   where
     loop arr ref = do
-        threadDelay (interval * 1000000)
-        update arr ref
+        delaySeconds interval
+        -- a failed rotation is retried at the next interval
+        update arr ref `E.catch` ignoreSync
         loop arr ref
+    ignoreSync :: E.SomeException -> IO ()
+    ignoreSync e = case E.fromException e of
+        Just (E.SomeAsyncException _) -> E.throwIO e
+        Nothing -> return ()
     update :: IOArray Int Secret -> I.IORef Int -> IO ()
     update arr ref = do
         idx0 <- I.readIORef ref
@@ -111,6 +116,15 @@ spawnTokenManager Config{..} = do
         sec <- generateSecret
         writeArray arr idx sec
         I.writeIORef ref idx
+
+-- threadDelay's microseconds overflow a 32-bit Int after 35 minutes.
+delaySeconds :: Int -> IO ()
+delaySeconds n
+    | n <= 0 = return ()
+    | otherwise = do
+        let m = min n 1000
+        threadDelay (m * 1000000)
+        delaySeconds (n - m)
 
 -- | Killing a token manager.
 killTokenManager :: TokenManager -> IO ()
